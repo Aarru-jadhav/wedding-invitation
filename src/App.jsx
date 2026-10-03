@@ -7,6 +7,10 @@ import weddingVideo from "./assets/video/wedding-cinematic.mp4";
 
 gsap.registerPlugin(ScrollTrigger);
 
+/* =====================================================
+   SCENES
+===================================================== */
+
 const scenes = [
   {
     start: 0.00,
@@ -15,6 +19,7 @@ const scenes = [
     title: "Gautam",
     subtitle: "& Divya",
   },
+
   {
     start: 0.18,
     end: 0.35,
@@ -22,6 +27,7 @@ const scenes = [
     title: "Two Hearts",
     subtitle: "One Beautiful Journey",
   },
+
   {
     start: 0.35,
     end: 0.52,
@@ -29,6 +35,7 @@ const scenes = [
     title: "19 July 2026",
     subtitle: "",
   },
+
   {
     start: 0.52,
     end: 0.72,
@@ -36,6 +43,7 @@ const scenes = [
     title: "Boho Farms",
     subtitle: "& Retreat · Indore",
   },
+
   {
     start: 0.72,
     end: 0.88,
@@ -43,6 +51,7 @@ const scenes = [
     title: "Join Us",
     subtitle: "For a celebration of love",
   },
+
   {
     start: 0.88,
     end: 1.0,
@@ -52,13 +61,35 @@ const scenes = [
   },
 ];
 
+/* =====================================================
+   APP
+===================================================== */
+
 function App() {
+  /* ===================================================
+     REFS
+  =================================================== */
+
   const sectionRef = useRef(null);
   const videoRef = useRef(null);
   const textRef = useRef(null);
 
   const lenisRef = useRef(null);
-  const playheadRef = useRef({ time: 0 });
+
+  /*
+   * Target video position
+   *
+   * Scroll changes this value.
+   * RAF smoothly moves actual video.currentTime
+   * towards this value.
+   */
+  const playheadRef = useRef({
+    time: 0,
+  });
+
+  /* ===================================================
+     STATE
+  =================================================== */
 
   const [entered, setEntered] = useState(false);
   const [sceneIndex, setSceneIndex] = useState(0);
@@ -66,11 +97,15 @@ function App() {
   const currentScene = scenes[sceneIndex];
 
   /* =====================================================
-     LOCK SCROLL BEFORE ENTER
+     LOCK BODY SCROLL BEFORE ENTER
   ===================================================== */
 
   useEffect(() => {
-    document.body.style.overflow = entered ? "" : "hidden";
+    if (!entered) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
 
     return () => {
       document.body.style.overflow = "";
@@ -78,7 +113,7 @@ function App() {
   }, [entered]);
 
   /* =====================================================
-     MAIN CINEMATIC ENGINE
+     CINEMATIC ENGINE
   ===================================================== */
 
   useEffect(() => {
@@ -89,37 +124,122 @@ function App() {
 
     if (!video || !section) return;
 
-    let lenis;
-    let ticker;
-    let trigger;
+    let lenis = null;
+    let ticker = null;
+    let trigger = null;
+    let videoRAF = null;
+
     let videoReady = false;
+
+    /*
+     * Target video time
+     *
+     * Scroll changes this.
+     */
+    let targetTime = 0;
+
+    /*
+     * Actual smoothed video time
+     */
+    let currentTime = 0;
+
+    /* =================================================
+       VIDEO UPDATE LOOP
+    ================================================= */
+
+    const updateVideo = () => {
+      if (videoReady && video.duration) {
+        /*
+         * Smooth movement toward target.
+         *
+         * Higher value = faster response
+         * Lower value = smoother/slower
+         */
+        currentTime +=
+          (targetTime - currentTime) * 0.18;
+
+        /*
+         * Only seek when difference is meaningful.
+         *
+         * This prevents thousands of unnecessary
+         * currentTime assignments.
+         */
+        if (
+          Math.abs(
+            video.currentTime - currentTime
+          ) > 0.025
+        ) {
+          if (video.readyState >= 2) {
+            video.currentTime = currentTime;
+          }
+        }
+      }
+
+      videoRAF =
+        requestAnimationFrame(updateVideo);
+    };
+
+    /* =================================================
+       INITIALIZE EXPERIENCE
+    ================================================= */
 
     const init = () => {
       if (videoReady) return;
 
       videoReady = true;
 
-      /* ================================================
+      /* ===============================================
+         VIDEO INITIAL STATE
+      =============================================== */
+
+      video.pause();
+
+      video.currentTime = 0;
+
+      targetTime = 0;
+      currentTime = 0;
+
+      playheadRef.current.time = 0;
+
+      /* ===============================================
          LENIS
-      ================================================ */
+      =============================================== */
 
       lenis = new Lenis({
-        duration: 1.15,
+        /*
+         * Main smooth scrolling.
+         */
         lerp: 0.08,
+
         smoothWheel: true,
-        smoothTouch: true,
-        syncTouch: true,
-        wheelMultiplier: 0.7,
-        touchMultiplier: 1.0,
+
+        /*
+         * Native touch scrolling is better
+         * for mobile video scrubbing.
+         */
+        smoothTouch: false,
+
+        syncTouch: false,
+
+        wheelMultiplier: 0.8,
+
+        touchMultiplier: 1,
       });
 
       lenisRef.current = lenis;
 
-      /* ================================================
-         LENIS → GSAP
-      ================================================ */
+      /* ===============================================
+         LENIS → SCROLLTRIGGER
+      =============================================== */
 
-      lenis.on("scroll", ScrollTrigger.update);
+      lenis.on(
+        "scroll",
+        ScrollTrigger.update
+      );
+
+      /* ===============================================
+         GSAP TICKER
+      =============================================== */
 
       ticker = (time) => {
         lenis.raf(time * 1000);
@@ -127,21 +247,21 @@ function App() {
 
       gsap.ticker.add(ticker);
 
+      /*
+       * Prevent GSAP from adding its own lag smoothing.
+       */
       gsap.ticker.lagSmoothing(0);
 
-      /* ================================================
-         PLAYHEAD
-      ================================================ */
+      /* ===============================================
+         START VIDEO RAF
+      =============================================== */
 
-      const playhead = playheadRef.current;
+      videoRAF =
+        requestAnimationFrame(updateVideo);
 
-      playhead.time = 0;
-
-      video.currentTime = 0;
-
-      /* ================================================
-         SCROLL TRIGGER
-      ================================================ */
+      /* ===============================================
+         SCROLLTRIGGER
+      =============================================== */
 
       trigger = ScrollTrigger.create({
         trigger: section,
@@ -150,82 +270,98 @@ function App() {
 
         end: "bottom bottom",
 
-        scrub: 1.5,
+        /*
+         * IMPORTANT:
+         *
+         * Lenis already smooths scrolling.
+         *
+         * Therefore ScrollTrigger doesn't need
+         * scrub: 1.5 or another smoothing layer.
+         */
+        scrub: true,
 
         invalidateOnRefresh: true,
 
         onUpdate: (self) => {
           if (!video.duration) return;
 
-          const targetTime =
-            self.progress * video.duration;
+          /* =========================================
+             VIDEO TARGET TIME
+          ========================================= */
 
-          /*
-           * Instead of directly jumping:
-           *
-           * video.currentTime = targetTime
-           *
-           * we smoothly animate a playhead.
-           */
+          targetTime =
+            self.progress *
+            video.duration;
 
-          gsap.to(playhead, {
-            time: targetTime,
+          playheadRef.current.time =
+            targetTime;
 
-            duration: 0.18,
-
-            ease: "power2.out",
-
-            overwrite: true,
-
-            onUpdate: () => {
-              if (
-                video.readyState >= 2
-              ) {
-                video.currentTime =
-                  playhead.time;
-              }
-            },
-          });
-
-          /* ============================================
-             TEXT SCENE
-          ============================================ */
+          /* =========================================
+             FIND CURRENT SCENE
+          ========================================= */
 
           let nextScene = 0;
 
-          for (let i = 0; i < scenes.length; i++) {
+          for (
+            let i = 0;
+            i < scenes.length;
+            i++
+          ) {
             if (
-              self.progress >= scenes[i].start &&
-              self.progress < scenes[i].end
+              self.progress >=
+                scenes[i].start &&
+              self.progress <
+                scenes[i].end
             ) {
               nextScene = i;
               break;
             }
           }
 
-          setSceneIndex((old) => {
-            if (old === nextScene) return old;
+          /* =========================================
+             ONLY UPDATE REACT WHEN SCENE CHANGES
+          ========================================= */
+
+          setSceneIndex((oldIndex) => {
+            if (oldIndex === nextScene) {
+              return oldIndex;
+            }
+
             return nextScene;
           });
         },
       });
 
+      /* ===============================================
+         REFRESH
+      =============================================== */
+
       ScrollTrigger.refresh();
     };
+
+    /* =================================================
+       VIDEO LOAD
+    ================================================= */
 
     if (video.readyState >= 2) {
       init();
     } else {
       video.addEventListener(
-        "canplay",
+        "loadedmetadata",
         init,
-        { once: true }
+        {
+          once: true,
+        }
       );
     }
 
+    /* =================================================
+       CLEANUP
+    ================================================= */
+
     return () => {
       video.removeEventListener(
-        "canplay",
+        "loadedmetadata",
         init
       );
 
@@ -240,6 +376,12 @@ function App() {
       if (lenis) {
         lenis.destroy();
       }
+
+      if (videoRAF) {
+        cancelAnimationFrame(videoRAF);
+      }
+
+      lenisRef.current = null;
     };
   }, [entered]);
 
@@ -252,35 +394,54 @@ function App() {
 
     const element = textRef.current;
 
+    /*
+     * Kill previous animation
+     */
     gsap.killTweensOf(element);
 
+    /*
+     * New scene animation
+     */
     gsap.fromTo(
       element,
 
       {
         opacity: 0,
+
         y: 28,
+
         filter: "blur(8px)",
       },
 
       {
         opacity: 1,
+
         y: 0,
+
         filter: "blur(0px)",
 
-        duration: 0.9,
+        duration: 0.8,
 
         ease: "power3.out",
       }
     );
+
+    return () => {
+      gsap.killTweensOf(element);
+    };
   }, [sceneIndex]);
 
   /* =====================================================
-     ENTER
+     ENTER EXPERIENCE
   ===================================================== */
 
   const enterExperience = () => {
     setEntered(true);
+
+    /*
+     * Make sure page starts from top.
+     */
+    window.scrollTo(0, 0);
   };
 
   /* =====================================================
@@ -335,10 +496,13 @@ function App() {
 
         <div className="cinematic-viewport">
 
-          {/* VIDEO */}
+          {/* =================================================
+              VIDEO
+          ================================================= */}
 
           <video
             ref={videoRef}
+
             src={weddingVideo}
 
             muted
@@ -347,18 +511,26 @@ function App() {
 
             preload="auto"
 
+            disablePictureInPicture
+
             className="cinematic-video"
           />
 
-          {/* OVERLAY */}
+          {/* =================================================
+              DARK OVERLAY
+          ================================================= */}
 
           <div className="cinematic-overlay" />
 
-          {/* VIGNETTE */}
+          {/* =================================================
+              VIGNETTE
+          ================================================= */}
 
           <div className="cinematic-vignette" />
 
-          {/* TEXT */}
+          {/* =================================================
+              WEDDING TEXT
+          ================================================= */}
 
           {currentScene.title && (
             <div className="wedding-text-wrapper">
@@ -369,15 +541,21 @@ function App() {
                 key={currentScene.title}
               >
 
+                {/* EYEBROW */}
+
                 {currentScene.eyebrow && (
                   <p className="wedding-eyebrow">
                     {currentScene.eyebrow}
                   </p>
                 )}
 
+                {/* TITLE */}
+
                 <h1>
                   {currentScene.title}
                 </h1>
+
+                {/* SUBTITLE */}
 
                 {currentScene.subtitle && (
                   <p className="wedding-subtitle">
@@ -390,7 +568,9 @@ function App() {
             </div>
           )}
 
-          {/* SCROLL */}
+          {/* =================================================
+              SCROLL INDICATOR
+          ================================================= */}
 
           <div className="scroll-indicator">
 
