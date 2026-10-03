@@ -461,6 +461,35 @@ button {
     bottom: 22px;
   }
 }
+.cinematic-canvas {
+  position: absolute;
+  inset: 0;
+
+  width: 100%;
+  height: 100%;
+
+  display: none;
+
+  object-fit: cover;
+
+  background: #000;
+
+  z-index: 1;
+}
+
+.cinematic-video {
+  z-index: 1;
+}
+
+@media (max-width: 768px) {
+  .cinematic-video {
+    display: none;
+  }
+
+  .cinematic-canvas {
+    display: block;
+  }
+}
 
 
 /* =====================================================
