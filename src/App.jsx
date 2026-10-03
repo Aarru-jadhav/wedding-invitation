@@ -5,16 +5,6 @@ import Lenis from "lenis";
 
 import weddingVideo from "./assets/video/wedding-cinematic.mp4";
 
-// Mobile frames
-const frameFiles = import.meta.glob(
-  "./assets/frames/*.webp",
-  {
-    eager: true,
-    query: "?url",
-    import: "default",
-  }
-);
-
 gsap.registerPlugin(ScrollTrigger);
 
 /* =====================================================
@@ -29,6 +19,7 @@ const scenes = [
     title: "Gautam",
     subtitle: "& Divya",
   },
+
   {
     start: 0.18,
     end: 0.35,
@@ -36,6 +27,7 @@ const scenes = [
     title: "Two Hearts",
     subtitle: "One Beautiful Journey",
   },
+
   {
     start: 0.35,
     end: 0.52,
@@ -43,6 +35,7 @@ const scenes = [
     title: "19 July 2026",
     subtitle: "",
   },
+
   {
     start: 0.52,
     end: 0.72,
@@ -50,6 +43,7 @@ const scenes = [
     title: "Boho Farms",
     subtitle: "& Retreat · Indore",
   },
+
   {
     start: 0.72,
     end: 0.88,
@@ -57,6 +51,7 @@ const scenes = [
     title: "Join Us",
     subtitle: "For a celebration of love",
   },
+
   {
     start: 0.88,
     end: 1.0,
@@ -65,26 +60,6 @@ const scenes = [
     subtitle: "",
   },
 ];
-
-/* =====================================================
-   SORT FRAME FILES
-===================================================== */
-
-const frameUrls = Object.entries(frameFiles)
-  .sort(([a], [b]) => {
-    const numA = parseInt(
-      a.match(/(\d+)\.webp$/)?.[1] || "0",
-      10
-    );
-
-    const numB = parseInt(
-      b.match(/(\d+)\.webp$/)?.[1] || "0",
-      10
-    );
-
-    return numA - numB;
-  })
-  .map(([, url]) => url);
 
 /* =====================================================
    APP
@@ -96,41 +71,41 @@ function App() {
   =================================================== */
 
   const sectionRef = useRef(null);
-
   const videoRef = useRef(null);
-
-  const canvasRef = useRef(null);
-
   const textRef = useRef(null);
 
   const lenisRef = useRef(null);
 
-  const frameImagesRef = useRef(new Map());
-
-  const currentFrameRef = useRef(-1);
-
-  const targetFrameRef = useRef(0);
-
-  const mobileRef = useRef(false);
+  /*
+   * Target video position
+   *
+   * Scroll changes this value.
+   * RAF smoothly moves actual video.currentTime
+   * towards this value.
+   */
+  const playheadRef = useRef({
+    time: 0,
+  });
 
   /* ===================================================
      STATE
   =================================================== */
 
   const [entered, setEntered] = useState(false);
-
   const [sceneIndex, setSceneIndex] = useState(0);
 
   const currentScene = scenes[sceneIndex];
 
-  /* ===================================================
-     LOCK BODY SCROLL
-  =================================================== */
+  /* =====================================================
+     LOCK BODY SCROLL BEFORE ENTER
+  ===================================================== */
 
   useEffect(() => {
-    document.body.style.overflow = entered
-      ? ""
-      : "hidden";
+    if (!entered) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
 
     return () => {
       document.body.style.overflow = "";
@@ -138,566 +113,192 @@ function App() {
   }, [entered]);
 
   /* =====================================================
-     MOBILE DETECTION
-  ===================================================== */
-
-  useEffect(() => {
-    const checkMobile = () => {
-      mobileRef.current =
-        window.matchMedia(
-          "(max-width: 768px)"
-        ).matches;
-    };
-
-    checkMobile();
-
-    window.addEventListener(
-      "resize",
-      checkMobile
-    );
-
-    return () => {
-      window.removeEventListener(
-        "resize",
-        checkMobile
-      );
-    };
-  }, []);
-
-  /* =====================================================
-     CANVAS DRAW
-  ===================================================== */
-
-  const drawFrame = (
-    image,
-    canvas
-  ) => {
-    if (!image || !canvas) return;
-
-    const ctx =
-      canvas.getContext("2d", {
-        alpha: false,
-        desynchronized: true,
-      });
-
-    if (!ctx) return;
-
-    const width =
-      window.innerWidth;
-
-    const height =
-      window.innerHeight;
-
-    /*
-     * Limit DPR for mobile performance.
-     */
-    const dpr = Math.min(
-      window.devicePixelRatio || 1,
-      1.5
-    );
-
-    canvas.width =
-      width * dpr;
-
-    canvas.height =
-      height * dpr;
-
-    canvas.style.width =
-      `${width}px`;
-
-    canvas.style.height =
-      `${height}px`;
-
-    ctx.setTransform(
-      dpr,
-      0,
-      0,
-      dpr,
-      0,
-      0
-    );
-
-    /*
-     * Black background
-     */
-    ctx.fillStyle = "#000";
-    ctx.fillRect(
-      0,
-      0,
-      width,
-      height
-    );
-
-    /*
-     * Cover calculation
-     */
-    const imageRatio =
-      image.width / image.height;
-
-    const canvasRatio =
-      width / height;
-
-    let drawWidth;
-    let drawHeight;
-    let offsetX;
-    let offsetY;
-
-    if (
-      imageRatio >
-      canvasRatio
-    ) {
-      drawHeight = height;
-
-      drawWidth =
-        height * imageRatio;
-
-      offsetX =
-        (width - drawWidth) / 2;
-
-      offsetY = 0;
-    } else {
-      drawWidth = width;
-
-      drawHeight =
-        width / imageRatio;
-
-      offsetX = 0;
-
-      offsetY =
-        (height - drawHeight) / 2;
-    }
-
-    ctx.drawImage(
-      image,
-      offsetX,
-      offsetY,
-      drawWidth,
-      drawHeight
-    );
-  };
-
-  /* =====================================================
-     LOAD FRAME
-  ===================================================== */
-
-  const loadFrame = (
-    index
-  ) => {
-    if (
-      index < 0 ||
-      index >= frameUrls.length
-    ) {
-      return Promise.resolve(null);
-    }
-
-    const cache =
-      frameImagesRef.current;
-
-    if (cache.has(index)) {
-      return Promise.resolve(
-        cache.get(index)
-      );
-    }
-
-    return new Promise(
-      (resolve) => {
-        const image =
-          new Image();
-
-        image.decoding =
-          "async";
-
-        image.onload = () => {
-          cache.set(
-            index,
-            image
-          );
-
-          resolve(image);
-        };
-
-        image.onerror = () => {
-          resolve(null);
-        };
-
-        image.src =
-          frameUrls[index];
-      }
-    );
-  };
-
-  /* =====================================================
-     PRELOAD NEARBY FRAMES
-  ===================================================== */
-
-  const preloadFrames = (
-    center
-  ) => {
-    const radius = 10;
-
-    for (
-      let i =
-        Math.max(
-          0,
-          center - radius
-        );
-
-      i <=
-        Math.min(
-          frameUrls.length - 1,
-          center + radius
-        );
-
-      i++
-    ) {
-      loadFrame(i);
-    }
-  };
-
-  /* =====================================================
-     DRAW CURRENT FRAME
-  ===================================================== */
-
-  const renderFrame = async (
-    frameIndex
-  ) => {
-    const canvas =
-      canvasRef.current;
-
-    if (!canvas) return;
-
-    if (
-      frameIndex ===
-      currentFrameRef.current
-    ) {
-      return;
-    }
-
-    const image =
-      await loadFrame(
-        frameIndex
-      );
-
-    if (!image) return;
-
-    /*
-     * Check again after async load.
-     */
-    const latestFrame =
-      targetFrameRef.current;
-
-    if (
-      Math.abs(
-        latestFrame -
-          frameIndex
-      ) > 2
-    ) {
-      return;
-    }
-
-    drawFrame(
-      image,
-      canvas
-    );
-
-    currentFrameRef.current =
-      frameIndex;
-
-    preloadFrames(
-      frameIndex
-    );
-  };
-
-  /* =====================================================
-     MOBILE FRAME ANIMATION
+     CINEMATIC ENGINE
   ===================================================== */
 
   useEffect(() => {
     if (!entered) return;
 
-    if (
-      !window.matchMedia(
-        "(max-width: 768px)"
-      ).matches
-    ) {
-      return;
-    }
+    const video = videoRef.current;
+    const section = sectionRef.current;
 
-    const canvas =
-      canvasRef.current;
-
-    if (!canvas) return;
-
-    let rafId;
-
-    const animate = () => {
-      const target =
-        targetFrameRef.current;
-
-      const current =
-        currentFrameRef.current;
-
-      /*
-       * Move one frame at a time.
-       * This prevents large jumps.
-       */
-      let next =
-        current < 0
-          ? target
-          : current;
-
-      if (
-        next !== target
-      ) {
-        if (
-          next < target
-        ) {
-          next += Math.min(
-            3,
-            target - next
-          );
-        } else {
-          next -= Math.min(
-            3,
-            next - target
-          );
-        }
-
-        renderFrame(next);
-      }
-
-      rafId =
-        requestAnimationFrame(
-          animate
-        );
-    };
-
-    /*
-     * Load first frame.
-     */
-    renderFrame(0);
-
-    rafId =
-      requestAnimationFrame(
-        animate
-      );
-
-    return () => {
-      cancelAnimationFrame(
-        rafId
-      );
-    };
-  }, [entered]);
-
-  /* =====================================================
-     MAIN CINEMATIC ENGINE
-  ===================================================== */
-
-  useEffect(() => {
-    if (!entered) return;
-
-    const section =
-      sectionRef.current;
-
-    const video =
-      videoRef.current;
-
-    if (!section) return;
+    if (!video || !section) return;
 
     let lenis = null;
-
     let ticker = null;
-
     let trigger = null;
-
     let videoRAF = null;
 
-    let targetVideoTime = 0;
+    let videoReady = false;
 
-    let currentVideoTime = 0;
+    /*
+     * Target video time
+     *
+     * Scroll changes this.
+     */
+    let targetTime = 0;
 
-    const isMobile =
-      window.matchMedia(
-        "(max-width: 768px)"
-      ).matches;
-
-    mobileRef.current =
-      isMobile;
+    /*
+     * Actual smoothed video time
+     */
+    let currentTime = 0;
 
     /* =================================================
-       DESKTOP VIDEO ENGINE
+       VIDEO UPDATE LOOP
     ================================================= */
 
     const updateVideo = () => {
-      if (
-        !isMobile &&
-        video &&
-        video.duration
-      ) {
-        currentVideoTime +=
-          (
-            targetVideoTime -
-              currentVideoTime
-          ) * 0.18;
+      if (videoReady && video.duration) {
+        /*
+         * Smooth movement toward target.
+         *
+         * Higher value = faster response
+         * Lower value = smoother/slower
+         */
+        currentTime +=
+          (targetTime - currentTime) * 0.18;
 
+        /*
+         * Only seek when difference is meaningful.
+         *
+         * This prevents thousands of unnecessary
+         * currentTime assignments.
+         */
         if (
           Math.abs(
-            video.currentTime -
-              currentVideoTime
-          ) > 0.025 &&
-          video.readyState >= 2
+            video.currentTime - currentTime
+          ) > 0.025
         ) {
-          video.currentTime =
-            currentVideoTime;
+          if (video.readyState >= 2) {
+            video.currentTime = currentTime;
+          }
         }
       }
 
       videoRAF =
-        requestAnimationFrame(
-          updateVideo
-        );
+        requestAnimationFrame(updateVideo);
     };
 
     /* =================================================
-       LENIS
+       INITIALIZE EXPERIENCE
     ================================================= */
 
-    lenis = new Lenis({
-      lerp: 0.08,
+    const init = () => {
+      if (videoReady) return;
 
-      smoothWheel: true,
+      videoReady = true;
 
-      /*
-       * Native mobile touch scrolling.
-       */
-      smoothTouch: false,
+      /* ===============================================
+         VIDEO INITIAL STATE
+      =============================================== */
 
-      syncTouch: false,
-
-      wheelMultiplier: 0.8,
-
-      touchMultiplier: 1,
-    });
-
-    lenisRef.current =
-      lenis;
-
-    lenis.on(
-      "scroll",
-      ScrollTrigger.update
-    );
-
-    /* =================================================
-       GSAP TICKER
-    ================================================= */
-
-    ticker = (time) => {
-      lenis.raf(
-        time * 1000
-      );
-    };
-
-    gsap.ticker.add(
-      ticker
-    );
-
-    gsap.ticker.lagSmoothing(
-      0
-    );
-
-    /* =================================================
-       DESKTOP VIDEO START
-    ================================================= */
-
-    if (
-      !isMobile &&
-      video
-    ) {
       video.pause();
 
       video.currentTime = 0;
 
-      currentVideoTime = 0;
+      targetTime = 0;
+      currentTime = 0;
 
-      targetVideoTime = 0;
-    }
+      playheadRef.current.time = 0;
 
-    /* =================================================
-       ANIMATION LOOP
-    ================================================= */
+      /* ===============================================
+         LENIS
+      =============================================== */
 
-    videoRAF =
-      requestAnimationFrame(
-        updateVideo
+      lenis = new Lenis({
+        /*
+         * Main smooth scrolling.
+         */
+        lerp: 0.08,
+
+        smoothWheel: true,
+
+        /*
+         * Native touch scrolling is better
+         * for mobile video scrubbing.
+         */
+        smoothTouch: false,
+
+        syncTouch: false,
+
+        wheelMultiplier: 0.8,
+
+        touchMultiplier: 1,
+      });
+
+      lenisRef.current = lenis;
+
+      /* ===============================================
+         LENIS → SCROLLTRIGGER
+      =============================================== */
+
+      lenis.on(
+        "scroll",
+        ScrollTrigger.update
       );
 
-    /* =================================================
-       SCROLL TRIGGER
-    ================================================= */
+      /* ===============================================
+         GSAP TICKER
+      =============================================== */
 
-    trigger =
-      ScrollTrigger.create({
+      ticker = (time) => {
+        lenis.raf(time * 1000);
+      };
+
+      gsap.ticker.add(ticker);
+
+      /*
+       * Prevent GSAP from adding its own lag smoothing.
+       */
+      gsap.ticker.lagSmoothing(0);
+
+      /* ===============================================
+         START VIDEO RAF
+      =============================================== */
+
+      videoRAF =
+        requestAnimationFrame(updateVideo);
+
+      /* ===============================================
+         SCROLLTRIGGER
+      =============================================== */
+
+      trigger = ScrollTrigger.create({
         trigger: section,
 
         start: "top top",
 
         end: "bottom bottom",
 
+        /*
+         * IMPORTANT:
+         *
+         * Lenis already smooths scrolling.
+         *
+         * Therefore ScrollTrigger doesn't need
+         * scrub: 1.5 or another smoothing layer.
+         */
         scrub: true,
 
         invalidateOnRefresh: true,
 
-        onUpdate: (
-          self
-        ) => {
-          const progress =
-            self.progress;
+        onUpdate: (self) => {
+          if (!video.duration) return;
 
-          /* ==========================================
-             MOBILE → CANVAS FRAME
-          ========================================== */
+          /* =========================================
+             VIDEO TARGET TIME
+          ========================================= */
 
-          if (
-            isMobile &&
-            frameUrls.length
-          ) {
-            const frameIndex =
-              Math.min(
-                frameUrls.length -
-                  1,
-                Math.max(
-                  0,
-                  Math.round(
-                    progress *
-                      (
-                        frameUrls.length -
-                        1
-                      )
-                  )
-                )
-              );
+          targetTime =
+            self.progress *
+            video.duration;
 
-            targetFrameRef.current =
-              frameIndex;
-          }
+          playheadRef.current.time =
+            targetTime;
 
-          /* ==========================================
-             DESKTOP → VIDEO
-          ========================================== */
-
-          if (
-            !isMobile &&
-            video &&
-            video.duration
-          ) {
-            targetVideoTime =
-              progress *
-              video.duration;
-          }
-
-          /* ==========================================
-             SCENE
-          ========================================== */
+          /* =========================================
+             FIND CURRENT SCENE
+          ========================================= */
 
           let nextScene = 0;
 
@@ -707,9 +308,9 @@ function App() {
             i++
           ) {
             if (
-              progress >=
+              self.progress >=
                 scenes[i].start &&
-              progress <
+              self.progress <
                 scenes[i].end
             ) {
               nextScene = i;
@@ -717,36 +318,59 @@ function App() {
             }
           }
 
-          setSceneIndex(
-            (oldIndex) => {
-              if (
-                oldIndex ===
-                nextScene
-              ) {
-                return oldIndex;
-              }
+          /* =========================================
+             ONLY UPDATE REACT WHEN SCENE CHANGES
+          ========================================= */
 
-              return nextScene;
+          setSceneIndex((oldIndex) => {
+            if (oldIndex === nextScene) {
+              return oldIndex;
             }
-          );
+
+            return nextScene;
+          });
         },
       });
 
-    ScrollTrigger.refresh();
+      /* ===============================================
+         REFRESH
+      =============================================== */
+
+      ScrollTrigger.refresh();
+    };
+
+    /* =================================================
+       VIDEO LOAD
+    ================================================= */
+
+    if (video.readyState >= 2) {
+      init();
+    } else {
+      video.addEventListener(
+        "loadedmetadata",
+        init,
+        {
+          once: true,
+        }
+      );
+    }
 
     /* =================================================
        CLEANUP
     ================================================= */
 
     return () => {
+      video.removeEventListener(
+        "loadedmetadata",
+        init
+      );
+
       if (trigger) {
         trigger.kill();
       }
 
       if (ticker) {
-        gsap.ticker.remove(
-          ticker
-        );
+        gsap.ticker.remove(ticker);
       }
 
       if (lenis) {
@@ -754,13 +378,10 @@ function App() {
       }
 
       if (videoRAF) {
-        cancelAnimationFrame(
-          videoRAF
-        );
+        cancelAnimationFrame(videoRAF);
       }
 
-      lenisRef.current =
-        null;
+      lenisRef.current = null;
     };
   }, [entered]);
 
@@ -769,16 +390,18 @@ function App() {
   ===================================================== */
 
   useEffect(() => {
-    if (!textRef.current)
-      return;
+    if (!textRef.current) return;
 
-    const element =
-      textRef.current;
+    const element = textRef.current;
 
-    gsap.killTweensOf(
-      element
-    );
+    /*
+     * Kill previous animation
+     */
+    gsap.killTweensOf(element);
 
+    /*
+     * New scene animation
+     */
     gsap.fromTo(
       element,
 
@@ -787,8 +410,7 @@ function App() {
 
         y: 28,
 
-        filter:
-          "blur(8px)",
+        filter: "blur(8px)",
       },
 
       {
@@ -796,36 +418,31 @@ function App() {
 
         y: 0,
 
-        filter:
-          "blur(0px)",
+        filter: "blur(0px)",
 
         duration: 0.8,
 
-        ease:
-          "power3.out",
+        ease: "power3.out",
       }
     );
 
     return () => {
-      gsap.killTweensOf(
-        element
-      );
+      gsap.killTweensOf(element);
     };
   }, [sceneIndex]);
 
   /* =====================================================
-     ENTER
+     ENTER EXPERIENCE
   ===================================================== */
 
-  const enterExperience =
-    () => {
-      setEntered(true);
+  const enterExperience = () => {
+    setEntered(true);
 
-      window.scrollTo(
-        0,
-        0
-      );
-    };
+    /*
+     * Make sure page starts from top.
+     */
+    window.scrollTo(0, 0);
+  };
 
   /* =====================================================
      UI
@@ -854,16 +471,13 @@ function App() {
             <div className="enter-line" />
 
             <button
-              onClick={
-                enterExperience
-              }
+              onClick={enterExperience}
             >
               TAP TO ENTER
             </button>
 
             <p className="enter-hint">
-              Scroll to enter the
-              celebration
+              Scroll to enter the celebration
             </p>
 
           </div>
@@ -883,30 +497,27 @@ function App() {
         <div className="cinematic-viewport">
 
           {/* =================================================
-              DESKTOP VIDEO
+              VIDEO
           ================================================= */}
 
           <video
             ref={videoRef}
+
             src={weddingVideo}
+
             muted
+
             playsInline
+
             preload="auto"
+
             disablePictureInPicture
+
             className="cinematic-video"
           />
 
           {/* =================================================
-              MOBILE CANVAS
-          ================================================= */}
-
-          <canvas
-            ref={canvasRef}
-            className="cinematic-canvas"
-          />
-
-          {/* =================================================
-              OVERLAY
+              DARK OVERLAY
           ================================================= */}
 
           <div className="cinematic-overlay" />
@@ -918,7 +529,7 @@ function App() {
           <div className="cinematic-vignette" />
 
           {/* =================================================
-              TEXT
+              WEDDING TEXT
           ================================================= */}
 
           {currentScene.title && (
@@ -927,30 +538,28 @@ function App() {
               <div
                 ref={textRef}
                 className="wedding-text"
-                key={
-                  currentScene.title
-                }
+                key={currentScene.title}
               >
+
+                {/* EYEBROW */}
 
                 {currentScene.eyebrow && (
                   <p className="wedding-eyebrow">
-                    {
-                      currentScene.eyebrow
-                    }
+                    {currentScene.eyebrow}
                   </p>
                 )}
 
+                {/* TITLE */}
+
                 <h1>
-                  {
-                    currentScene.title
-                  }
+                  {currentScene.title}
                 </h1>
+
+                {/* SUBTITLE */}
 
                 {currentScene.subtitle && (
                   <p className="wedding-subtitle">
-                    {
-                      currentScene.subtitle
-                    }
+                    {currentScene.subtitle}
                   </p>
                 )}
 
@@ -960,7 +569,7 @@ function App() {
           )}
 
           {/* =================================================
-              SCROLL
+              SCROLL INDICATOR
           ================================================= */}
 
           <div className="scroll-indicator">
