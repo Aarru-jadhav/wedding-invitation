@@ -3,10 +3,7 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
-/*
- * Frame sequence (instead of <video>)
- * Phone par aadhe frames (STEP = 2), computer par saare.
- */
+/* Phone par aadhe frames (STEP = 2), computer par saare */
 const IS_MOBILE = window.matchMedia("(max-width: 768px)").matches;
 const IS_TOUCH = window.matchMedia("(pointer: coarse)").matches;
 const STEP = IS_MOBILE ? 2 : 1;
@@ -31,6 +28,31 @@ const loadOrder = Array.from({ length: FRAME_COUNT }, (_, i) => i).sort(
     return pri(a) - pri(b) || a - b;
   }
 );
+
+/* Safari/purane phones par bhi chale, isliye fallback ke saath */
+async function loadFrame(url) {
+  const blob = await (await fetch(url)).blob();
+
+  if (window.createImageBitmap) {
+    try {
+      return await createImageBitmap(
+        blob,
+        IS_MOBILE ? { resizeWidth: 400, resizeQuality: "medium" } : undefined
+      );
+    } catch {
+      try {
+        return await createImageBitmap(blob);
+      } catch {
+        /* neeche Image se try karenge */
+      }
+    }
+  }
+
+  const img = new Image();
+  img.src = URL.createObjectURL(blob);
+  await img.decode();
+  return img;
+}
 
 gsap.registerPlugin(ScrollTrigger);
 ScrollTrigger.config({ ignoreMobileResize: true });
@@ -94,6 +116,7 @@ function App() {
   const framesRef = useRef(new Array(FRAME_COUNT).fill(null));
   const textRef = useRef(null);
   const lenisRef = useRef(null);
+  const sceneRef = useRef(0);
 
   const [entered, setEntered] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -126,13 +149,7 @@ function App() {
         const i = loadOrder[next++];
         try {
           if (!frames[i]) {
-            const blob = await (await fetch(frameUrls[i])).blob();
-            frames[i] = await createImageBitmap(
-              blob,
-              IS_MOBILE
-                ? { resizeWidth: 400, resizeQuality: "medium" }
-                : undefined
-            );
+            frames[i] = await loadFrame(frameUrls[i]);
           }
         } catch {
           /* kharab frame skip */
@@ -167,10 +184,11 @@ function App() {
     let trigger = null;
     let raf = null;
 
-    let target = 0;
-    let current = 0;
-    let shown = -1;
+    let target = 0; // 0..1 scroll progress
+    let current = 0; // smoothed progress
+    let lastPos = -1;
 
+    /* sabse paas ka loaded frame */
     const nearest = (idx) => {
       for (let d = 0; d < FRAME_COUNT; d++) {
         if (frames[idx - d]) return idx - d;
@@ -181,21 +199,38 @@ function App() {
 
     const draw = () => {
       current += (target - current) * 0.2;
+      if (Math.abs(target - current) < 0.0002) current = target;
 
-      const idx = Math.min(
-        FRAME_COUNT - 1,
-        Math.max(0, Math.round(current * (FRAME_COUNT - 1)))
-      );
-      const k = nearest(idx);
+      const pos = current * (FRAME_COUNT - 1);
 
-      if (k !== -1 && k !== shown) {
-        const img = frames[k];
-        if (canvas.width !== img.width) {
-          canvas.width = img.width;
-          canvas.height = img.height;
+      if (Math.abs(pos - lastPos) > 0.004) {
+        const i0 = Math.min(FRAME_COUNT - 1, Math.max(0, Math.floor(pos)));
+        const i1 = Math.min(FRAME_COUNT - 1, i0 + 1);
+        const blend = pos - i0;
+
+        const k0 = nearest(i0);
+
+        if (k0 !== -1) {
+          const img0 = frames[k0];
+
+          if (canvas.width !== img0.width) {
+            canvas.width = img0.width;
+            canvas.height = img0.height;
+          }
+
+          ctx.globalAlpha = 1;
+          ctx.drawImage(img0, 0, 0);
+
+          /* do frames ko blend karte hain = smooth motion */
+          const k1 = nearest(i1);
+          if (blend > 0.03 && k1 !== -1 && k1 !== k0) {
+            ctx.globalAlpha = blend;
+            ctx.drawImage(frames[k1], 0, 0);
+            ctx.globalAlpha = 1;
+          }
+
+          lastPos = pos;
         }
-        ctx.drawImage(img, 0, 0);
-        shown = k;
       }
 
       raf = requestAnimationFrame(draw);
@@ -238,7 +273,11 @@ function App() {
           }
         }
 
-        setSceneIndex((old) => (old === nextScene ? old : nextScene));
+        /* React sirf tab chale jab scene badle */
+        if (sceneRef.current !== nextScene) {
+          sceneRef.current = nextScene;
+          setSceneIndex(nextScene);
+        }
       },
     });
 
@@ -253,7 +292,7 @@ function App() {
     };
   }, [entered]);
 
-  /* text animation */
+  /* text animation (phone par blur nahi) */
   useEffect(() => {
     if (!textRef.current) return;
 
@@ -263,8 +302,18 @@ function App() {
 
     gsap.fromTo(
       element,
-      { opacity: 0, y: 28, filter: "blur(8px)" },
-      { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.8, ease: "power3.out" }
+      IS_MOBILE
+        ? { opacity: 0, y: 20 }
+        : { opacity: 0, y: 28, filter: "blur(8px)" },
+      IS_MOBILE
+        ? { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }
+        : {
+            opacity: 1,
+            y: 0,
+            filter: "blur(0px)",
+            duration: 0.8,
+            ease: "power3.out",
+          }
     );
 
     return () => {
