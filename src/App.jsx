@@ -3,7 +3,34 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
-import weddingVideo from "./assets/video/wedding-cinematic.mp4";
+/*
+ * Frame sequence (instead of <video>)
+ * STEP = 1 uses all 234 frames. If still heavy on slow phones,
+ * set STEP = 2 (half the frames, half the download).
+ */
+const STEP = 1;
+
+const frameUrls = Object.entries(
+  import.meta.glob("./assets/frames/*.webp", {
+    eager: true,
+    query: "?url",
+    import: "default",
+  })
+)
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([, url]) => url)
+  .filter((_, i) => i % STEP === 0);
+
+const FRAME_COUNT = frameUrls.length;
+
+/* load every 4th frame first, then every 2nd, then the rest,
+   so the whole timeline is usable very early */
+const loadOrder = Array.from({ length: FRAME_COUNT }, (_, i) => i).sort(
+  (a, b) => {
+    const pri = (i) => (i % 4 === 0 ? 0 : i % 2 === 0 ? 1 : 2);
+    return pri(a) - pri(b) || a - b;
+  }
+);
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -71,27 +98,18 @@ function App() {
   =================================================== */
 
   const sectionRef = useRef(null);
-  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const framesRef = useRef(new Array(FRAME_COUNT).fill(null));
   const textRef = useRef(null);
 
   const lenisRef = useRef(null);
-
-  /*
-   * Target video position
-   *
-   * Scroll changes this value.
-   * RAF smoothly moves actual video.currentTime
-   * towards this value.
-   */
-  const playheadRef = useRef({
-    time: 0,
-  });
 
   /* ===================================================
      STATE
   =================================================== */
 
   const [entered, setEntered] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [sceneIndex, setSceneIndex] = useState(0);
 
   const currentScene = scenes[sceneIndex];
@@ -113,274 +131,142 @@ function App() {
   }, [entered]);
 
   /* =====================================================
-     CINEMATIC ENGINE
+     PRELOAD FRAMES (starts immediately, while enter screen shows)
+  ===================================================== */
+
+  useEffect(() => {
+    let cancelled = false;
+    const frames = framesRef.current;
+    let next = 0;
+    let done = 0;
+
+    const worker = async () => {
+      while (!cancelled && next < loadOrder.length) {
+        const i = loadOrder[next++];
+        try {
+          if (!frames[i]) {
+            const blob = await (await fetch(frameUrls[i])).blob();
+            frames[i] = await createImageBitmap(blob);
+          }
+        } catch {
+          /* skip broken frame */
+        }
+        done++;
+        if (done % 6 === 0 || done === FRAME_COUNT) {
+          setProgress(done / FRAME_COUNT);
+        }
+      }
+    };
+
+    Promise.all(Array.from({ length: 6 }, worker));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* =====================================================
+     CINEMATIC ENGINE (canvas frame sequence)
   ===================================================== */
 
   useEffect(() => {
     if (!entered) return;
 
-    const video = videoRef.current;
+    const canvas = canvasRef.current;
     const section = sectionRef.current;
+    if (!canvas || !section) return;
 
-    if (!video || !section) return;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const frames = framesRef.current;
 
     let lenis = null;
     let ticker = null;
     let trigger = null;
-    let videoRAF = null;
+    let raf = null;
 
-    let videoReady = false;
+    let target = 0; // 0..1 scroll progress
+    let current = 0; // smoothed progress
+    let shown = -1;
 
-    /*
-     * Target video time
-     *
-     * Scroll changes this.
-     */
-    let targetTime = 0;
+    /* closest frame that is already loaded */
+    const nearest = (idx) => {
+      for (let d = 0; d < FRAME_COUNT; d++) {
+        if (frames[idx - d]) return idx - d;
+        if (frames[idx + d]) return idx + d;
+      }
+      return -1;
+    };
 
-    /*
-     * Actual smoothed video time
-     */
-    let currentTime = 0;
+    const draw = () => {
+      current += (target - current) * 0.15;
 
-    /* =================================================
-       VIDEO UPDATE LOOP
-    ================================================= */
+      const idx = Math.min(
+        FRAME_COUNT - 1,
+        Math.max(0, Math.round(current * (FRAME_COUNT - 1)))
+      );
+      const k = nearest(idx);
 
-    const updateVideo = () => {
-      if (videoReady && video.duration) {
-        /*
-         * Smooth movement toward target.
-         *
-         * Higher value = faster response
-         * Lower value = smoother/slower
-         */
-        currentTime +=
-          (targetTime - currentTime) * 0.18;
-
-        /*
-         * Only seek when difference is meaningful.
-         *
-         * This prevents thousands of unnecessary
-         * currentTime assignments.
-         */
-        if (
-          Math.abs(
-            video.currentTime - currentTime
-          ) > 0.025
-        ) {
-          if (video.readyState >= 2) {
-            video.currentTime = currentTime;
-          }
+      if (k !== -1 && k !== shown) {
+        const img = frames[k];
+        if (canvas.width !== img.width) {
+          canvas.width = img.width;
+          canvas.height = img.height;
         }
+        ctx.drawImage(img, 0, 0);
+        shown = k;
       }
 
-      videoRAF =
-        requestAnimationFrame(updateVideo);
+      raf = requestAnimationFrame(draw);
     };
 
-    /* =================================================
-       INITIALIZE EXPERIENCE
-    ================================================= */
+    lenis = new Lenis({
+      lerp: 0.08,
+      smoothWheel: true,
+      syncTouch: false,
+      wheelMultiplier: 0.8,
+      touchMultiplier: 1,
+    });
 
-    const init = () => {
-      if (videoReady) return;
+    lenis.on("scroll", ScrollTrigger.update);
 
-      videoReady = true;
+    ticker = (time) => {
+      lenis.raf(time * 1000);
+    };
+    gsap.ticker.add(ticker);
+    gsap.ticker.lagSmoothing(0);
 
-      /* ===============================================
-         VIDEO INITIAL STATE
-      =============================================== */
+    raf = requestAnimationFrame(draw);
 
-      video.pause();
+    trigger = ScrollTrigger.create({
+      trigger: section,
+      start: "top top",
+      end: "bottom bottom",
+      scrub: true,
+      invalidateOnRefresh: true,
 
-      video.currentTime = 0;
+      onUpdate: (self) => {
+        target = self.progress;
 
-      targetTime = 0;
-      currentTime = 0;
-
-      playheadRef.current.time = 0;
-
-      /* ===============================================
-         LENIS
-      =============================================== */
-
-      lenis = new Lenis({
-        /*
-         * Main smooth scrolling.
-         */
-        lerp: 0.08,
-
-        smoothWheel: true,
-
-        /*
-         * Native touch scrolling is better
-         * for mobile video scrubbing.
-         */
-        smoothTouch: false,
-
-        syncTouch: false,
-
-        wheelMultiplier: 0.8,
-
-        touchMultiplier: 1,
-      });
-
-      lenisRef.current = lenis;
-
-      /* ===============================================
-         LENIS → SCROLLTRIGGER
-      =============================================== */
-
-      lenis.on(
-        "scroll",
-        ScrollTrigger.update
-      );
-
-      /* ===============================================
-         GSAP TICKER
-      =============================================== */
-
-      ticker = (time) => {
-        lenis.raf(time * 1000);
-      };
-
-      gsap.ticker.add(ticker);
-
-      /*
-       * Prevent GSAP from adding its own lag smoothing.
-       */
-      gsap.ticker.lagSmoothing(0);
-
-      /* ===============================================
-         START VIDEO RAF
-      =============================================== */
-
-      videoRAF =
-        requestAnimationFrame(updateVideo);
-
-      /* ===============================================
-         SCROLLTRIGGER
-      =============================================== */
-
-      trigger = ScrollTrigger.create({
-        trigger: section,
-
-        start: "top top",
-
-        end: "bottom bottom",
-
-        /*
-         * IMPORTANT:
-         *
-         * Lenis already smooths scrolling.
-         *
-         * Therefore ScrollTrigger doesn't need
-         * scrub: 1.5 or another smoothing layer.
-         */
-        scrub: true,
-
-        invalidateOnRefresh: true,
-
-        onUpdate: (self) => {
-          if (!video.duration) return;
-
-          /* =========================================
-             VIDEO TARGET TIME
-          ========================================= */
-
-          targetTime =
-            self.progress *
-            video.duration;
-
-          playheadRef.current.time =
-            targetTime;
-
-          /* =========================================
-             FIND CURRENT SCENE
-          ========================================= */
-
-          let nextScene = 0;
-
-          for (
-            let i = 0;
-            i < scenes.length;
-            i++
-          ) {
-            if (
-              self.progress >=
-                scenes[i].start &&
-              self.progress <
-                scenes[i].end
-            ) {
-              nextScene = i;
-              break;
-            }
+        let nextScene = 0;
+        for (let i = 0; i < scenes.length; i++) {
+          if (self.progress >= scenes[i].start && self.progress < scenes[i].end) {
+            nextScene = i;
+            break;
           }
-
-          /* =========================================
-             ONLY UPDATE REACT WHEN SCENE CHANGES
-          ========================================= */
-
-          setSceneIndex((oldIndex) => {
-            if (oldIndex === nextScene) {
-              return oldIndex;
-            }
-
-            return nextScene;
-          });
-        },
-      });
-
-      /* ===============================================
-         REFRESH
-      =============================================== */
-
-      ScrollTrigger.refresh();
-    };
-
-    /* =================================================
-       VIDEO LOAD
-    ================================================= */
-
-    if (video.readyState >= 2) {
-      init();
-    } else {
-      video.addEventListener(
-        "loadedmetadata",
-        init,
-        {
-          once: true,
         }
-      );
-    }
 
-    /* =================================================
-       CLEANUP
-    ================================================= */
+        /* only re-render React when scene changes */
+        setSceneIndex((old) => (old === nextScene ? old : nextScene));
+      },
+    });
+
+    ScrollTrigger.refresh();
 
     return () => {
-      video.removeEventListener(
-        "loadedmetadata",
-        init
-      );
-
-      if (trigger) {
-        trigger.kill();
-      }
-
-      if (ticker) {
-        gsap.ticker.remove(ticker);
-      }
-
-      if (lenis) {
-        lenis.destroy();
-      }
-
-      if (videoRAF) {
-        cancelAnimationFrame(videoRAF);
-      }
-
+      if (trigger) trigger.kill();
+      if (ticker) gsap.ticker.remove(ticker);
+      if (lenis) lenis.destroy();
+      if (raf) cancelAnimationFrame(raf);
       lenisRef.current = null;
     };
   }, [entered]);
@@ -472,8 +358,11 @@ function App() {
 
             <button
               onClick={enterExperience}
+              disabled={progress < 0.26}
             >
-              TAP TO ENTER
+              {progress < 0.26
+                ? `LOADING ${Math.round((progress / 0.26) * 100)}%`
+                : "TAP TO ENTER"}
             </button>
 
             <p className="enter-hint">
@@ -500,21 +389,7 @@ function App() {
               VIDEO
           ================================================= */}
 
-          <video
-            ref={videoRef}
-
-            src={weddingVideo}
-
-            muted
-
-            playsInline
-
-            preload="auto"
-
-            disablePictureInPicture
-
-            className="cinematic-video"
-          />
+          <canvas ref={canvasRef} className="cinematic-video" />
 
           {/* =================================================
               DARK OVERLAY
